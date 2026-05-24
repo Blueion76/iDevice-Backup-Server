@@ -6,6 +6,8 @@ function App() {
   const [devices, setDevices] = useState([]);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [ipAddress, setIpAddress] = useState('');
+  const [pairRecordId, setPairRecordId] = useState('');
 
   const fetchDevices = async () => {
     try {
@@ -73,6 +75,27 @@ function App() {
     }
   };
 
+  const handleNetworkConnect = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/network/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ip_address: ipAddress.trim(),
+          pair_record_id: pairRecordId.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to connect');
+      }
+      alert(data.message || 'Network connection requested');
+      fetchDevices();
+    } catch (e) {
+      alert(e.message || 'Error connecting network device');
+    }
+  };
+
   if (loading) return <div className="p-10 text-center">Loading devices...</div>;
 
   return (
@@ -81,6 +104,32 @@ function App() {
         <h1 className="text-3xl font-bold text-gray-800">iBackup for ZimaOS</h1>
         <p className="text-gray-500">Auto Wi-Fi Backups via libimobiledevice</p>
       </header>
+
+      <div className="bg-white p-4 rounded shadow mb-6">
+        <h2 className="text-lg font-semibold mb-3">Direct Wi-Fi Connect (IP)</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            type="text"
+            placeholder="Device IP (e.g. 192.168.1.10)"
+            value={ipAddress}
+            onChange={e => setIpAddress(e.target.value)}
+            className="border p-2 rounded"
+          />
+          <input
+            type="text"
+            placeholder="Pair Record ID (optional)"
+            value={pairRecordId}
+            onChange={e => setPairRecordId(e.target.value)}
+            className="border p-2 rounded"
+          />
+          <button
+            onClick={handleNetworkConnect}
+            className="bg-indigo-500 hover:bg-indigo-600 text-white rounded px-3 py-2 font-medium"
+          >
+            Connect by IP
+          </button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>

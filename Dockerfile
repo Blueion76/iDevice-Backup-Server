@@ -6,7 +6,7 @@ RUN npm install
 COPY frontend/ .
 RUN npm run build
 
-# Stage 2: Build libimobiledevice from source for Avahi/mDNS support
+# Stage 2: Build fosple/usbmuxd2 and its dependencies from source
 FROM python:3.11-slim AS lib-builder
 
 RUN apt-get update && apt-get install -y \
@@ -20,8 +20,6 @@ RUN apt-get update && apt-get install -y \
     libusb-1.0-0-dev \
     libavahi-client-dev \
     libcurl4-openssl-dev \
-    python3-dev \
-    cython3 \
     clang \
     && rm -rf /var/lib/apt/lists/*
 
@@ -55,10 +53,10 @@ RUN git clone https://github.com/tihmstar/libgeneral.git && \
     PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./autogen.sh && \
     make -j$(nproc) && make install
 
-RUN git clone https://github.com/tihmstar/usbmuxd2.git && \
+RUN git clone https://github.com/fosple/usbmuxd2.git && \
     cd usbmuxd2 && \
-    sed -i 's/-std=c++20/-std=c++17/g' configure.ac && \
-    CC=clang CXX=clang++ PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./autogen.sh && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./autogen.sh && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure CC=clang CXX=clang++ && \
     make -j$(nproc) && make install
 
 # Stage 3: Final Image
@@ -72,11 +70,8 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     libusb-1.0-0 \
     libavahi-client3 \
-    curl \
-    iputils-ping \
     libcurl4 \
-    python3-dev \
-    gcc \
+    iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy compiled libraries and binaries from builder
@@ -87,7 +82,7 @@ COPY --from=lib-builder /usr/local/sbin/ /usr/local/sbin/
 # Update library cache so it finds the newly copied libs
 RUN ldconfig
 
-# Add usbmux user
+# Add usbmux user (required by usbmuxd)
 RUN adduser --system --no-create-home --group usbmux
 
 WORKDIR /app
@@ -109,6 +104,6 @@ RUN chmod +x /app/entrypoint.sh
 # Volumes
 VOLUME [ "/var/lib/lockdown", "/app/config", "/backups" ]
 
-EXPOSE 8000
+EXPOSE 8987
 
 ENTRYPOINT ["/app/entrypoint.sh"]

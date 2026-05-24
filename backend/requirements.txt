@@ -5,3 +5,4 @@ pydantic==2.5.2
 apscheduler==3.10.4
 sqlite-utils==3.35.2
 python-multipart==0.0.6
+pymobiledevice3==9.13.0
