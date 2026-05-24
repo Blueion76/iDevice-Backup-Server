@@ -55,6 +55,7 @@ RUN git clone https://github.com/tihmstar/libgeneral.git && \
 
 RUN git clone https://github.com/fosple/usbmuxd2.git && \
     cd usbmuxd2 && \
+    sed -i '1i #include <algorithm>' usbmuxd2/Muxer.cpp && \
     PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./autogen.sh && \
     PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure CC=clang CXX=clang++ && \
     make -j$(nproc) && make install
