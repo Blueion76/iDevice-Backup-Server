@@ -5,7 +5,7 @@ import logging
 import os
 
 from database import get_db
-from libimobiledevice import LibIMobileDevice
+from device_manager import LibIMobileDevice
 
 logger = logging.getLogger(__name__)
 
