@@ -4,6 +4,8 @@ import shutil
 import logging
 import plistlib
 import time
+import re
+import shlex
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,14 @@ rh-allow-sha1-signatures = yes
 
 
 class LibIMobileDevice:
+    _ALLOWED_COMMANDS = {"idevice_id", "ideviceinfo", "idevicepair", "idevicebackup2"}
+    _UDID_RE = re.compile(r"^[A-Za-z0-9-]+$")
+    _SAFE_ARG_RE = re.compile(r"^[A-Za-z0-9_./:=+\-]+$")
+
+    @classmethod
+    def _is_valid_udid(cls, udid: str) -> bool:
+        return bool(udid) and bool(cls._UDID_RE.fullmatch(udid))
+
     @staticmethod
     def _ensure_openssl_conf(path_hint: str | None = None) -> str:
         conf_path = os.environ.get(
@@ -32,6 +42,18 @@ class LibIMobileDevice:
 
     @staticmethod
     def _run_cmd(cmd: list, timeout: int = 30, env: dict | None = None):
+        args = cmd[1:] if cmd else []
+        if (
+            not cmd
+            or cmd[0] not in LibIMobileDevice._ALLOWED_COMMANDS
+            or any(not isinstance(arg, str) or any(c in arg for c in "\r\n\0") for arg in cmd)
+            or any(
+                shlex.quote(arg) != arg
+                and not LibIMobileDevice._SAFE_ARG_RE.fullmatch(arg)
+                for arg in args
+            )
+        ):
+            return False, "", "Invalid command arguments"
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
@@ -79,6 +101,8 @@ class LibIMobileDevice:
 
     @classmethod
     def get_device_info(cls, udid: str, is_network: bool = False):
+        if not cls._is_valid_udid(udid):
+            return None
         cmd = ["ideviceinfo", "-u", udid, "-x"]
         if is_network:
             cmd.insert(1, "-n")
@@ -95,6 +119,8 @@ class LibIMobileDevice:
 
     @classmethod
     def is_paired(cls, udid: str, is_network: bool = False):
+        if not cls._is_valid_udid(udid):
+            return False
         cmd = ["idevicepair", "-u", udid, "validate"]
         if is_network:
             cmd.insert(1, "-n")
@@ -104,6 +130,8 @@ class LibIMobileDevice:
 
     @classmethod
     def pair_device(cls, udid: str, is_network: bool = False):
+        if not cls._is_valid_udid(udid):
+            return False, "Invalid device UDID"
         cmd = ["idevicepair", "-u", udid, "pair"]
         if is_network:
             cmd.insert(1, "-n")
@@ -153,6 +181,8 @@ class LibIMobileDevice:
         strategy: str = "incremental",
         is_network: bool = False,
     ):
+        if not cls._is_valid_udid(udid):
+            return False, "Invalid device UDID"
         backup_root = os.path.abspath(dest_path)
         device_backup_dir = os.path.abspath(os.path.join(backup_root, udid))
         if os.path.commonpath([backup_root, device_backup_dir]) != backup_root:
