@@ -13,7 +13,7 @@ import json
 import logging
 
 from scheduler import start_scheduler
-from device_manager import LibIMobileDevice
+from libimobiledevice import LibIMobileDevice
 from database import init_db, get_db
 
 app = FastAPI()

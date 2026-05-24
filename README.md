@@ -13,6 +13,7 @@ Powered by [`libimobiledevice`](https://libimobiledevice.org/) under the hood, t
 - ⏰ **Automated Scheduling:** A background task checks periodically to see if an authorized, reachable iOS device is due for a backup.
 - ⚙️ **Custom Strategies:** Choose between standard **Incremental** backups (faster, saves space) or **Full** overwrites for each device.
 - 🐳 **Dockerized:** Easy deployment using `docker-compose`. Custom built with `usbmuxd2` to ensure proper Linux Wi-Fi Sync via Avahi (mDNS).
+- 🔁 **iLinuxNetworkBackup-compatible flow:** Pairing/backups now follow the same `idevicepair` + `idevicebackup2` + OpenSSL compatibility approach used in `avibrazil/iLinuxNetworkBackup`.
 
 ## Prerequisites
 
@@ -71,7 +72,26 @@ To enable automatic wireless backups, you must pair your device over USB **once*
 
 - **Device not showing up?** Ensure your `docker-compose.yml` uses `network_mode: host`. iOS wireless sync relies on Bonjour (mDNS) broadcast packets which cannot easily traverse Docker bridge networks.
 - **Pairing fails?** Re-plug the USB cable, ensure the device is unlocked *before* clicking pair, and check the container logs for details.
+- **SHA1/OpenSSL pairing errors?** The container auto-creates `/backups/openssl-weak.conf` and sets `OPENSSL_CONF` for `idevicepair`/`idevicebackup2`, matching the compatibility workaround used by iLinuxNetworkBackup.
 - **Backup fails?** Ensure the mapped backup destination path has enough free space and correct write permissions for the container.
+
+## iLinuxNetworkBackup Compatibility Notes
+
+This project now adapts the backup-server logic from [`avibrazil/iLinuxNetworkBackup`](https://github.com/avibrazil/iLinuxNetworkBackup) into this FastAPI backend while preserving the existing web UI.
+
+The backend now mirrors the same core workflow:
+- Use `idevicepair` for trust/pairing (including Wi-Fi sync enablement).
+- Use `idevicebackup2` for backup execution (incremental/full from UI strategy).
+- Use OpenSSL compatibility profile (`openssl-weak.conf`) so modern OpenSSL defaults do not block pairing/backup signatures.
+- Use netmuxd automatically for network backups when available (`NETMUXD_BIN`), with fallback to native `--network` mode.
+
+### Optional environment variables
+
+- `OPENSSL_WEAK_CONF` (default: `/backups/openssl-weak.conf`)
+- `NETMUXD_BIN` (path to netmuxd binary; if omitted backend uses `PATH` or `/backups/netmuxd`)
+- `NETMUXD_HOST` (default: `127.0.0.1`)
+- `NETMUXD_PORT` (default: `27015`)
+- `NETMUXD_DISCOVERY_WAIT_SECONDS` (default: `5`)
 
 ## Architecture
 
