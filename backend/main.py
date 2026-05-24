@@ -179,8 +179,15 @@ def connect_network_device(request: NetworkConnectRequest):
                 detail="Multiple pair records found. Specify pair record id.",
             )
 
+    # usbmuxd2 direct-IP mode requires starting usbmuxd with --connect options.
+    # If an instance is already running, stop it first to avoid lockfile conflicts.
+    subprocess.run(["usbmuxd", "-X"], capture_output=True, text=True, timeout=10)
+
     cmd = [
         "usbmuxd",
+        "-d",
+        "-U",
+        "usbmux",
         "-c",
         ip_address,
         "--pair-record-id",
