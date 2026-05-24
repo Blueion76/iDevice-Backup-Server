@@ -5,7 +5,7 @@ import logging
 import os
 
 from database import get_db
-from device_manager import LibIMobileDevice
+from libimobiledevice import LibIMobileDevice
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,9 @@ def check_for_backups():
         if udid not in reachable_udids:
             continue
 
-        if not LibIMobileDevice.is_paired(udid):
+        dev_info = next((d for d in connected if d["udid"] == udid), None)
+        is_network = dev_info["type"] == "network" if dev_info else False
+        if not LibIMobileDevice.is_paired(udid, is_network=is_network):
             continue
 
         # Check last backup time
@@ -102,10 +104,6 @@ def check_for_backups():
 
         if should_backup:
             logger.info(f"Device {udid} is due for backup. Enqueueing.")
-
-            # Find if network
-            dev_info = next((d for d in connected if d["udid"] == udid), None)
-            is_network = dev_info["type"] == "network" if dev_info else False
 
             # Run it async using apscheduler job
             scheduler.add_job(

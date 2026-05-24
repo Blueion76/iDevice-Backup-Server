@@ -1,18 +1,48 @@
 import subprocess
-import json
-import re
 import os
 import shutil
 import logging
+import plistlib
+import time
 
 logger = logging.getLogger(__name__)
+
+OPENSSL_WEAK_TEMPLATE = """\
+.include /etc/ssl/openssl.cnf
+[openssl_init]
+alg_section = evp_properties
+[evp_properties]
+rh-allow-sha1-signatures = yes
+"""
 
 
 class LibIMobileDevice:
     @staticmethod
-    def _run_cmd(cmd: list):
+    def _ensure_openssl_conf(path_hint: str | None = None) -> str:
+        conf_path = os.environ.get(
+            "OPENSSL_WEAK_CONF",
+            os.path.join(path_hint or "/backups", "openssl-weak.conf"),
+        )
+        conf_dir = os.path.dirname(conf_path) or "."
+        os.makedirs(conf_dir, exist_ok=True)
+        if not os.path.exists(conf_path):
+            with open(conf_path, "w", encoding="utf-8") as fh:
+                fh.write(OPENSSL_WEAK_TEMPLATE)
+        return conf_path
+
+    @staticmethod
+    def _run_cmd(cmd: list, timeout: int = 30, env: dict | None = None):
+        merged_env = os.environ.copy()
+        if env:
+            merged_env.update(env)
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=merged_env,
+            )
             return True, result.stdout.strip(), result.stderr.strip()
         except subprocess.TimeoutExpired:
             return False, "", "Command timed out"
@@ -22,17 +52,30 @@ class LibIMobileDevice:
     @classmethod
     def get_connected_devices(cls):
         """Returns list of dicts: [{'udid': '...', 'type': 'usb|network'}]"""
-        success, out, err = cls._run_cmd(["idevice_id"])
-        devices = []
-        if success:
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) >= 2:
-                    udid = parts[0]
-                    conn = parts[1]  # usually (USB) or (Network)
-                    conn_type = "network" if "Network" in conn else "usb"
-                    devices.append({"udid": udid, "type": conn_type})
-        return devices
+        devices: dict[str, str] = {}
+        success_usb, out_usb, _ = cls._run_cmd(["idevice_id", "--usb"])
+        if success_usb:
+            for line in out_usb.splitlines():
+                udid = line.strip()
+                if udid:
+                    devices[udid] = "usb"
+
+        success_network, out_network, _ = cls._run_cmd(["idevice_id", "--network"])
+        if success_network:
+            for line in out_network.splitlines():
+                udid = line.strip()
+                if udid:
+                    devices[udid] = "network"
+
+        if not devices:
+            success_all, out_all, _ = cls._run_cmd(["idevice_id", "-l"])
+            if success_all:
+                for line in out_all.splitlines():
+                    udid = line.strip()
+                    if udid:
+                        devices[udid] = "usb"
+
+        return [{"udid": udid, "type": conn_type} for udid, conn_type in devices.items()]
 
     @classmethod
     def get_device_info(cls, udid: str, is_network: bool = False):
@@ -43,13 +86,11 @@ class LibIMobileDevice:
         if not success:
             return None
 
-        import plistlib
-
         try:
             # Output is XML plist
             plist = plistlib.loads(out.encode("utf-8"))
             return plist
-        except Exception as e:
+        except Exception:
             return None
 
     @classmethod
@@ -57,23 +98,52 @@ class LibIMobileDevice:
         cmd = ["idevicepair", "-u", udid, "validate"]
         if is_network:
             cmd.insert(1, "-n")
-        success, out, err = cls._run_cmd(cmd)
-        return "SUCCESS" in out
+        openssl_conf = cls._ensure_openssl_conf()
+        success, out, err = cls._run_cmd(cmd, env={"OPENSSL_CONF": openssl_conf})
+        return success and "SUCCESS" in f"{out}\n{err}".upper()
 
     @classmethod
     def pair_device(cls, udid: str, is_network: bool = False):
         cmd = ["idevicepair", "-u", udid, "pair"]
         if is_network:
             cmd.insert(1, "-n")
-        success, out, err = cls._run_cmd(cmd)
-        if "SUCCESS" in out:
-            return (
-                True,
-                "Paired successfully. You might need to accept Trust on the device.",
-            )
-        elif "ERROR" in out or err:
-            return False, err if err else out
+        openssl_conf = cls._ensure_openssl_conf()
+        success, out, err = cls._run_cmd(cmd, env={"OPENSSL_CONF": openssl_conf})
+        pair_output = f"{out}\n{err}".strip()
+        if success and "SUCCESS" in pair_output.upper():
+            if not is_network:
+                cls._run_cmd(
+                    ["idevicepair", "-u", udid, "wifi", "on"],
+                    env={"OPENSSL_CONF": openssl_conf},
+                )
+            return True, "Paired successfully. Wi-Fi sync enabled."
+        elif pair_output:
+            return False, pair_output
         return False, "Unknown error during pairing"
+
+    @classmethod
+    def _start_netmuxd_for_network_backup(cls, backup_root: str):
+        netmuxd_bin = os.environ.get("NETMUXD_BIN")
+        if not netmuxd_bin:
+            netmuxd_bin = shutil.which("netmuxd")
+        if not netmuxd_bin:
+            candidate = os.path.join(backup_root, "netmuxd")
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                netmuxd_bin = candidate
+        if not netmuxd_bin:
+            return None, None
+
+        host = os.environ.get("NETMUXD_HOST", "127.0.0.1")
+        port = os.environ.get("NETMUXD_PORT", "27015")
+
+        process = subprocess.Popen(
+            [netmuxd_bin, "--disable-unix", "--host", host],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        time.sleep(float(os.environ.get("NETMUXD_DISCOVERY_WAIT_SECONDS", "5")))
+        return process, f"{host}:{port}"
 
     @classmethod
     def backup_device(
@@ -83,38 +153,60 @@ class LibIMobileDevice:
         strategy: str = "incremental",
         is_network: bool = False,
     ):
+        backup_root = os.path.abspath(dest_path)
+        device_backup_dir = os.path.abspath(os.path.join(backup_root, udid))
+        if os.path.commonpath([backup_root, device_backup_dir]) != backup_root:
+            return False, "Invalid backup path configuration"
+
         if strategy == "full":
             logger.info(
-                f"Full backup requested for {udid}. Removing old backup dir: {dest_path}"
+                f"Full backup requested for {udid}. Removing old backup dir: {device_backup_dir}"
             )
-            # Be careful with rm -rf, make sure dest_path is sane
-            if os.path.exists(dest_path) and len(dest_path) > 5:
-                shutil.rmtree(dest_path, ignore_errors=True)
+            if os.path.isdir(device_backup_dir):
+                shutil.rmtree(device_backup_dir, ignore_errors=True)
 
-        os.makedirs(dest_path, exist_ok=True)
+        os.makedirs(backup_root, exist_ok=True)
+        openssl_conf = cls._ensure_openssl_conf(backup_root)
+        env = {"OPENSSL_CONF": openssl_conf}
+        netmuxd_process = None
 
-        # Enable wifi sync if on USB
-        if not is_network:
-            cls._run_cmd(["idevicepair", "-u", udid, "wifi", "on"])
-
-        # Run backup
-        cmd = ["idevicebackup2", "-u", udid, "backup", dest_path]
         if is_network:
-            cmd.insert(1, "-n")
+            netmuxd_process, socket_address = cls._start_netmuxd_for_network_backup(
+                backup_root
+            )
+            if socket_address:
+                env["USBMUXD_SOCKET_ADDRESS"] = socket_address
+            else:
+                logger.warning("netmuxd not found. Trying native --network mode.")
+
+        cmd = ["idevicebackup2", "backup"]
+        if is_network:
+            cmd.append("--network")
+        if strategy == "full":
+            cmd.append("--full")
+        cmd.extend(["-u", udid, backup_root])
         logger.info(f"Running backup command: {' '.join(cmd)}")
 
-        # We run this one with Popen to stream logs or wait
-        # For simplicity, we block here. In prod, we'd want to stream to DB
         process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env={**os.environ, **env},
         )
 
-        if process.stdout:
-            for line in process.stdout:
-                # We could save this to DB logs here
-                logger.info(f"[BACKUP {udid}] {line.strip()}")
-
-        process.wait()
+        try:
+            if process.stdout:
+                for line in process.stdout:
+                    logger.info(f"[BACKUP {udid}] {line.strip()}")
+            process.wait()
+        finally:
+            if netmuxd_process and netmuxd_process.poll() is None:
+                netmuxd_process.terminate()
+                try:
+                    netmuxd_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    netmuxd_process.kill()
 
         if process.returncode == 0:
             return True, "Backup completed successfully"

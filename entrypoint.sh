@@ -13,5 +13,18 @@ avahi-daemon -D
 # Start usbmuxd in background
 usbmuxd -U usbmux &
 
+# iLinuxNetworkBackup-style OpenSSL compatibility profile for pairing/backup
+mkdir -p /backups
+if [ ! -f /backups/openssl-weak.conf ]; then
+cat <<'EOF' > /backups/openssl-weak.conf
+.include /etc/ssl/openssl.cnf
+[openssl_init]
+alg_section = evp_properties
+[evp_properties]
+rh-allow-sha1-signatures = yes
+EOF
+fi
+export OPENSSL_WEAK_CONF=/backups/openssl-weak.conf
+
 # Start the FastAPI backend
 exec uvicorn main:app --host 0.0.0.0 --port 8987
