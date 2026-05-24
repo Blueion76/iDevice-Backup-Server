@@ -18,4 +18,4 @@ services:
       - /var/run/udev:/var/run/udev:ro
       - ./config:/app/config
       - ./backups:/backups
-    restart: unless-stopped
+
