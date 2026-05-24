@@ -132,14 +132,19 @@ class LibIMobileDevice:
 
         Returns (success, message).
         """
+        backup_root = os.path.abspath(dest_path)
+        device_backup_dir = os.path.abspath(os.path.join(backup_root, udid))
+        if os.path.commonpath([backup_root, device_backup_dir]) != backup_root:
+            return False, "Invalid backup path configuration"
+
         if strategy == "full":
             logger.info(
-                f"Full backup requested for {udid}. Removing old backup dir: {dest_path}"
+                f"Full backup requested for {udid}. Removing old device backup dir: {device_backup_dir}"
             )
-            if os.path.exists(dest_path) and len(dest_path) > 5:
-                shutil.rmtree(dest_path, ignore_errors=True)
+            if os.path.isdir(device_backup_dir):
+                shutil.rmtree(device_backup_dir, ignore_errors=True)
 
-        os.makedirs(dest_path, exist_ok=True)
+        os.makedirs(backup_root, exist_ok=True)
         connection_type = "Network" if is_network else "USB"
 
         async def _backup():
@@ -156,7 +161,7 @@ class LibIMobileDevice:
 
                     await backup_service.backup(
                         full=(strategy == "full"),
-                        backup_directory=dest_path,
+                        backup_directory=backup_root,
                         progress_callback=progress_callback,
                     )
 

@@ -19,3 +19,4 @@ services:
       - ./config:/app/config
       - ./backups:/backups
 
+    restart: unless-stopped

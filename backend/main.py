@@ -6,6 +6,8 @@ from pydantic import BaseModel
 import sqlite3
 import os
 import subprocess
+import ipaddress
+import re
 from datetime import datetime
 import json
 import logging
@@ -124,6 +126,11 @@ class DeviceConfig(BaseModel):
     overwrite_strategy: str
 
 
+class NetworkConnectRequest(BaseModel):
+    ip_address: str
+    pair_record_id: str | None = None
+
+
 @app.post("/api/devices/{udid}/config")
 def update_config(udid: str, config: DeviceConfig):
     db = get_db()
@@ -133,6 +140,58 @@ def update_config(udid: str, config: DeviceConfig):
     )
     db.commit()
     return {"status": "success"}
+
+
+@app.post("/api/network/connect")
+def connect_network_device(request: NetworkConnectRequest):
+    try:
+        parsed_ip = ipaddress.ip_address(request.ip_address.strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid IP address")
+    ip_address = str(parsed_ip)
+
+    pair_record_id = request.pair_record_id.strip() if request.pair_record_id else None
+    if pair_record_id:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", pair_record_id):
+            raise HTTPException(status_code=400, detail="Invalid pair record id")
+    else:
+        lockdown_dir = "/var/lib/lockdown"
+        if not os.path.isdir(lockdown_dir):
+            raise HTTPException(
+                status_code=400,
+                detail="Pair record directory not found. Pair the device over USB first.",
+            )
+        records = [
+            os.path.splitext(name)[0]
+            for name in os.listdir(lockdown_dir)
+            if name.endswith(".plist")
+        ]
+        if len(records) == 1:
+            pair_record_id = records[0]
+        elif not records:
+            raise HTTPException(
+                status_code=400,
+                detail="No pair records found. Pair the device over USB first.",
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Multiple pair records found. Specify pair record id.",
+            )
+
+    cmd = [
+        "usbmuxd",
+        "-c",
+        ip_address,
+        "--pair-record-id",
+        pair_record_id,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    if result.returncode != 0:
+        error = (result.stderr or result.stdout or "Failed to connect device").strip()
+        raise HTTPException(status_code=400, detail=error)
+
+    return {"status": "success", "message": "Network device connection requested"}
 
 
 @app.post("/api/devices/{udid}/backup")
